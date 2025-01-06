@@ -6,6 +6,7 @@ const envSchema = z.object({
     PORT: z.coerce.number().default(3333),
     COOKIE_SECRET: z.string(),
     DATABASE_URL: z.string(),
+    OPENAI_API_KEY: z.string(),
 })
 
 const _env = envSchema.safeParse(process.env)
