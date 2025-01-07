@@ -8,7 +8,7 @@ export async function MeetingRoutes(app: FastifyInstance) {
   app.post("/meetings", MeetingController.createMeeting);
   app.post(
     "/meetings/audio-upload",
-    { preHandler: upload.single("audio") }, // Middleware para lidar com uploads
+    { preHandler: upload.single("audio") },
     MeetingController.uploadAudio
   );
   
