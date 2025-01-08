@@ -1,19 +1,16 @@
 import { FastifyInstance } from "fastify";
 import { MeetingController } from "../controllers/MeetingController";
-import multer from "fastify-multer";
-
-const upload = multer({ dest: "uploads/" });
+import { authMiddleware } from "../utils/authMiddleware";
 
 export async function MeetingRoutes(app: FastifyInstance) {
-  app.post("/meetings", MeetingController.createMeeting);
-  app.post(
-    "/meetings/audio-upload",
-    { preHandler: upload.single("audio") },
-    MeetingController.uploadAudio
-  );
+  app.post("/meetings", { preHandler: [authMiddleware] }, MeetingController.createMeeting);
   
-  app.post("/meetings/:id/upload-audio", MeetingController.uploadAudio);
-  app.post("/meetings/:id/transcribe", MeetingController.transcribeMeeting);
-  app.get("/meetings", MeetingController.getMeetings);
-  app.get("/meetings/:id", MeetingController.getMeetingById);
+  // Single route for audio upload with auth middleware
+  app.post("/meetings/:id/upload-audio", { 
+    preHandler: [authMiddleware],
+  }, MeetingController.uploadAudio);
+  
+  app.post("/meetings/:id/transcribe", { preHandler: [authMiddleware] }, MeetingController.transcribeMeeting);
+  app.get("/meetings", { preHandler: [authMiddleware] }, MeetingController.getMeetings);
+  app.get("/meetings/:id", { preHandler: [authMiddleware] }, MeetingController.getMeetingById);
 }
