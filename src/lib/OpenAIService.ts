@@ -1,142 +1,81 @@
-import axios, { AxiosError } from "axios";
-import FormData from "form-data";
+import OpenAI from "openai";
 import fs from "fs";
+import path from "path";
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-class RateLimiter {
-  private queue: (() => Promise<void>)[] = [];
-  private isProcessing = false;
-
-  async addTask(task: () => Promise<void>) {
-    this.queue.push(task);
-    if (!this.isProcessing) {
-      this.processQueue();
-    }
-  }
-
-  private async processQueue() {
-    this.isProcessing = true;
-    while (this.queue.length > 0) {
-      const task = this.queue.shift();
-      if (task) await task();
-      await delay(1000); // Intervalo entre as solicitações
-    }
-    this.isProcessing = false;
-  }
-}
-
-const limiter = new RateLimiter();
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 export class OpenAIService {
-  static async transcribeAudio(audioPath: string, retries = 5): Promise<string> {
-    let lastError: any;
-
-    for (let attempt = 0; attempt < retries; attempt++) {
-      try {
-        const formData = new FormData();
-        formData.append("model", "whisper-1");
-        formData.append("file", fs.createReadStream(audioPath));
-
-        const response = await axios.post(
-          "https://api.openai.com/v1/audio/transcriptions",
-          formData,
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-              ...formData.getHeaders(),
-            },
-          }
-        );
-
-        return response.data.text;
-      } catch (error) {
-        lastError = error;
-
-        if (error instanceof AxiosError && error.response?.status === 429) {
-          console.log(`Rate limited, attempt ${attempt + 1}/${retries}. Waiting before retry...`);
-          await delay(Math.pow(2, attempt) * 1000); // Backoff exponencial
-          continue;
-        }
-
-        if (error instanceof AxiosError) {
-          console.error("Axios error:", {
-            status: error.response?.status,
-            data: error.response?.data,
-            headers: error.response?.headers,
-          });
-          throw new Error(
-            error.response?.data?.error?.message || "Failed to transcribe audio"
-          );
-        }
-
-        await delay(1000 * (attempt + 1));
+  static async transcribeAudio(audioPath: string, retries = 3): Promise<string> {
+    try {
+      // Verify file exists and is readable
+      if (!fs.existsSync(audioPath)) {
+        throw new Error(`Audio file not found at path: ${audioPath}`);
       }
-    }
 
-    throw lastError;
+      for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+          console.log('Starting transcription with OpenAI...');
+          
+          // Create a read stream just before using it
+          const fileStream = fs.createReadStream(audioPath);
+          
+          const response = await openai.audio.transcriptions.create({
+            file: fileStream,
+            model: "whisper-1",
+            language: "en",
+            response_format: "json"
+          });
+
+          // Close the stream
+          fileStream.destroy();
+
+          console.log('Transcription successful');
+          return response.text;
+        } catch (error: any) {
+          console.error('OpenAI API Error:', error);
+
+          if (error.status === 429 || error.code === 'ECONNRESET') {
+            const waitTime = Math.pow(2, attempt) * 1000;
+            console.log(`Rate limited or connection reset. Waiting ${waitTime}ms before retry...`);
+            await delay(waitTime);
+            continue;
+          }
+          throw error;
+        }
+      }
+      throw new Error('Max retries exceeded for transcription');
+    } catch (error) {
+      console.error('Transcription failed:', error);
+      throw error;
+    }
   }
 
-  static async summarizeTranscript(transcript: string, retries = 5): Promise<string> {
-    let lastError: any;
-
-    for (let attempt = 0; attempt < retries; attempt++) {
-      try {
-        const response = await axios.post(
-          "https://api.openai.com/v1/chat/completions",
+  static async summarizeTranscript(transcript: string): Promise<string> {
+    try {
+      const response = await openai.chat.completions.create({
+        model: "gpt-4",
+        messages: [
           {
-            model: "gpt-4",
-            messages: [
-              { role: "system", content: "You are an assistant summarizing meeting transcripts." },
-              { role: "user", content: `Summarize the following transcript: ${transcript}` },
-            ],
+            role: "system",
+            content: "You are an expert at summarizing meeting transcripts. Create a clear, concise summary with key points and action items."
           },
           {
-            headers: {
-              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-              "Content-Type": "application/json",
-            },
+            role: "user",
+            content: `Please summarize this meeting transcript and highlight the key points and action items: ${transcript}`
           }
-        );
+        ],
+        temperature: 0.7,
+        max_tokens: 500
+      });
 
-        return response.data.choices[0].message.content;
-      } catch (error) {
-        lastError = error;
-
-        if (error instanceof AxiosError && error.response?.status === 429) {
-          console.log(`Rate limited, attempt ${attempt + 1}/${retries}. Waiting before retry...`);
-          await delay(Math.pow(2, attempt) * 1000); // Backoff exponencial
-          continue;
-        }
-
-        if (error instanceof AxiosError) {
-          console.error("Axios error:", {
-            status: error.response?.status,
-            data: error.response?.data,
-            headers: error.response?.headers,
-          });
-          throw new Error(
-            error.response?.data?.error?.message || "Failed to summarize transcript"
-          );
-        }
-
-        await delay(1000 * (attempt + 1));
-      }
+      return response.choices[0].message.content || '';
+    } catch (error) {
+      console.error('Summary generation failed:', error);
+      throw error;
     }
-
-    throw lastError;
   }
 }
-
-// Adicionando ao Rate Limiter
-const audioFilePaths: string[] = []; // Define your audio file paths here
-audioFilePaths.forEach(audioPath => {
-  limiter.addTask(async () => {
-    try {
-      const transcript = await OpenAIService.transcribeAudio(audioPath);
-      console.log("Transcription complete:", transcript);
-    } catch (error) {
-      console.error("Error during transcription:", error);
-    }
-  });
-});
