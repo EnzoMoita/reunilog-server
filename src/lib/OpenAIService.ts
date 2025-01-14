@@ -16,12 +16,15 @@ export class OpenAIService {
         throw new Error(`Audio file not found at path: ${audioPath}`);
       }
 
+      // Use the original webm file path
+      const webmPath = audioPath;
+
       for (let attempt = 0; attempt < retries; attempt++) {
         try {
           console.log('Starting transcription with OpenAI...');
           
           // Create a read stream just before using it
-          const fileStream = fs.createReadStream(audioPath);
+          const fileStream = fs.createReadStream(webmPath);
           
           const response = await openai.audio.transcriptions.create({
             file: fileStream,
